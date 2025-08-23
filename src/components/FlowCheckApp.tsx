@@ -3,6 +3,8 @@ import { Timer } from './Timer';
 import { Analytics } from './Analytics';
 import { Header } from './Header';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 type Session = {
   id: string;
@@ -16,49 +18,48 @@ export const FlowCheckApp = () => {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeView, setActiveView] = useState<'timer' | 'analytics'>('timer');
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+  const { user } = useAuth();
 
-  // Mock sessions for demonstration
+  // Load user sessions
   useEffect(() => {
-    const mockSessions: Session[] = [
-      {
-        id: '1',
-        description: 'Deep work session',
-        start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
-        end: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000), // 2 hours
-        duration: 2 * 60 * 60 * 1000
-      },
-      {
-        id: '2',
-        description: 'Code review',
-        start: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000),
-        end: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000 + 90 * 60 * 1000), // 90 minutes
-        duration: 90 * 60 * 1000
-      },
-      {
-        id: '3',
-        description: 'Writing documentation',
-        start: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-        end: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000 + 3 * 60 * 60 * 1000), // 3 hours
-        duration: 3 * 60 * 60 * 1000
-      },
-      {
-        id: '4',
-        description: 'Learning session',
-        start: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-        end: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000 + 75 * 60 * 1000), // 75 minutes
-        duration: 75 * 60 * 1000
-      },
-      {
-        id: '5',
-        description: 'Project planning',
-        start: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-        end: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000 + 45 * 60 * 1000), // 45 minutes
-        duration: 45 * 60 * 1000
+    const loadSessions = async () => {
+      if (!user) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from('focus_sessions')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('start_time', { ascending: false })
+          .limit(50);
+
+        if (error) throw error;
+
+        const formattedSessions = data.map(session => ({
+          id: session.id,
+          description: session.description,
+          start: new Date(session.start_time),
+          end: session.end_time ? new Date(session.end_time) : undefined,
+          duration: session.duration
+        }));
+
+        setSessions(formattedSessions);
+      } catch (error) {
+        console.error('Error loading sessions:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load your sessions.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
       }
-    ];
-    setSessions(mockSessions);
-  }, []);
+    };
+
+    loadSessions();
+  }, [user, toast]);
 
   const handleStartSession = (description: string) => {
     const newSession: Session = {
@@ -100,6 +101,14 @@ export const FlowCheckApp = () => {
       variant: "default",
     });
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-surface flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-surface">

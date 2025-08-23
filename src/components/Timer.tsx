@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card } from '@/components/ui/card';
-import { Play, Pause, Square, Clock, Target } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Play, Pause, Square, Clock, Wifi, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { InactivityDialog } from './InactivityDialog';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 type Session = {
   id: string;
@@ -20,27 +24,26 @@ interface TimerProps {
   onInactivityPrompt: () => void;
 }
 
-export const Timer: React.FC<TimerProps> = ({
-  currentSession,
-  onStartSession,
-  onEndSession,
-  onInactivityPrompt
-}) => {
+export const Timer = ({ currentSession, onStartSession, onEndSession, onInactivityPrompt }: TimerProps) => {
   const [description, setDescription] = useState('');
   const [elapsedTime, setElapsedTime] = useState(0);
   const [lastActivity, setLastActivity] = useState(Date.now());
+  const [showInactivityDialog, setShowInactivityDialog] = useState(false);
+  const [inactivityStage, setInactivityStage] = useState<'first' | 'repeat'>('first');
   const intervalRef = useRef<NodeJS.Timeout>();
-  const inactivityTimeoutRef = useRef<NodeJS.Timeout>();
+  const inactivityTimerRef = useRef<NodeJS.Timeout>();
+  const { isOnline, saveSessionOffline } = useOfflineSync();
+  const { user } = useAuth();
 
-  // Update elapsed time when session is active
+  // Update elapsed time
   useEffect(() => {
     if (currentSession) {
       const updateElapsed = () => {
         setElapsedTime(Date.now() - currentSession.start.getTime());
       };
 
+      updateElapsed();
       intervalRef.current = setInterval(updateElapsed, 1000);
-      updateElapsed(); // Initial update
 
       return () => {
         if (intervalRef.current) {
@@ -56,42 +59,47 @@ export const Timer: React.FC<TimerProps> = ({
   useEffect(() => {
     if (!currentSession) return;
 
-    const handleActivity = () => {
+    const resetActivity = () => {
       setLastActivity(Date.now());
     };
 
     const checkInactivity = () => {
       const now = Date.now();
-      const timeSinceActivity = now - lastActivity;
-      const sessionDuration = now - currentSession.start.getTime();
-
-      // First check at 45 minutes, then every 30 minutes
-      const inactivityThreshold = sessionDuration < 45 * 60 * 1000 
-        ? 45 * 60 * 1000 
-        : 30 * 60 * 1000;
-
-      if (timeSinceActivity > inactivityThreshold) {
-        onInactivityPrompt();
-        setLastActivity(now); // Reset activity timer after prompt
+      const timeSinceLastActivity = now - lastActivity;
+      
+      // First prompt at 45 minutes, then every 30 minutes
+      const firstThreshold = 45 * 60 * 1000; // 45 minutes
+      const repeatThreshold = 30 * 60 * 1000; // 30 minutes
+      
+      const threshold = inactivityStage === 'first' ? firstThreshold : repeatThreshold;
+      
+      if (timeSinceLastActivity >= threshold) {
+        setShowInactivityDialog(true);
+        setLastActivity(now); // Reset to prevent immediate re-triggering
       }
     };
 
-    // Add activity listeners
-    window.addEventListener('mousemove', handleActivity);
-    window.addEventListener('keydown', handleActivity);
-    window.addEventListener('click', handleActivity);
+    // Set up event listeners
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    events.forEach(event => {
+      document.addEventListener(event, resetActivity, true);
+    });
 
-    // Check inactivity every 30 seconds
-    const inactivityInterval = setInterval(checkInactivity, 30000);
+    // Check for inactivity every minute
+    const inactivityInterval = setInterval(checkInactivity, 60000);
+    inactivityTimerRef.current = inactivityInterval;
 
     return () => {
-      window.removeEventListener('mousemove', handleActivity);
-      window.removeEventListener('keydown', handleActivity);
-      window.removeEventListener('click', handleActivity);
-      clearInterval(inactivityInterval);
+      events.forEach(event => {
+        document.removeEventListener(event, resetActivity, true);
+      });
+      if (inactivityTimerRef.current) {
+        clearInterval(inactivityTimerRef.current);
+      }
     };
-  }, [currentSession, lastActivity, onInactivityPrompt]);
+  }, [currentSession, lastActivity, inactivityStage]);
 
+  // Format time display
   const formatTime = (milliseconds: number) => {
     const totalSeconds = Math.floor(milliseconds / 1000);
     const hours = Math.floor(totalSeconds / 3600);
@@ -101,108 +109,157 @@ export const Timer: React.FC<TimerProps> = ({
     if (hours > 0) {
       return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     }
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
   const handleStart = () => {
-    if (!description.trim()) return;
-    onStartSession(description);
+    if (description.trim()) {
+      onStartSession(description.trim());
+      setDescription('');
+      setInactivityStage('first');
+    }
+  };
+
+  const handleStop = async () => {
+    if (currentSession) {
+      const endedSession = {
+        ...currentSession,
+        end: new Date(),
+        duration: Date.now() - currentSession.start.getTime()
+      };
+
+      // Try to save to cloud first, fallback to offline storage
+      if (isOnline && user) {
+        try {
+          await supabase
+            .from('focus_sessions')
+            .insert({
+              user_id: user.id,
+              description: endedSession.description,
+              start_time: endedSession.start.toISOString(),
+              end_time: endedSession.end.toISOString(),
+              duration: endedSession.duration,
+            });
+        } catch (error) {
+          saveSessionOffline(endedSession);
+        }
+      } else {
+        saveSessionOffline(endedSession);
+      }
+    }
+    onEndSession();
+  };
+
+  const handleInactivityContinue = () => {
+    setShowInactivityDialog(false);
+    setInactivityStage('repeat'); // Next prompts will be every 30 minutes
     setLastActivity(Date.now());
   };
 
-  const handleStop = () => {
-    onEndSession();
-    setDescription('');
+  const handleInactivityEnd = () => {
+    setShowInactivityDialog(false);
+    handleStop();
   };
 
   return (
-    <div className="container mx-auto px-4 py-12 max-w-4xl">
-      <div className="text-center mb-12">
-        <h1 className="text-4xl md:text-6xl font-bold mb-4 gradient-text">
-          FlowCheck
-        </h1>
-        <p className="text-xl text-foreground-secondary max-w-2xl mx-auto">
-          Track your focus sessions with smart inactivity detection and detailed analytics
-        </p>
+    <>
+      <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <div className="text-center space-y-6">
+          <div className="space-y-2">
+            <h3 className="text-2xl font-semibold">Ready to Focus?</h3>
+            <p className="text-foreground-secondary">
+              Start a focused work session and track your productivity
+            </p>
+            <div className="flex items-center justify-center space-x-2 text-sm">
+              {isOnline ? (
+                <><Wifi className="h-4 w-4 text-success" /><span className="text-success">Online</span></>
+              ) : (
+                <><WifiOff className="h-4 w-4 text-warning" /><span className="text-warning">Offline</span></>
+              )}
+            </div>
+          </div>
+
+          <Card className="glass-effect border-border/50 overflow-hidden">
+            <CardContent className="p-8 space-y-8">
+              {!currentSession ? (
+                <div className="space-y-6">
+                  <div className="space-y-3">
+                    <Input
+                      type="text"
+                      placeholder="What are you working on?"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          handleStart();
+                        }
+                      }}
+                      className="text-center text-lg"
+                    />
+                    <Button 
+                      onClick={handleStart}
+                      disabled={!description.trim()}
+                      size="lg"
+                      className="w-full min-h-[60px] text-lg"
+                    >
+                      <Play className="w-6 h-6 mr-3" />
+                      Start Focus Session
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center space-y-6">
+                  <div className="space-y-2">
+                    <h4 className="text-lg font-medium text-foreground-secondary">
+                      Currently working on
+                    </h4>
+                    <h3 className="text-2xl font-semibold">{currentSession.description}</h3>
+                  </div>
+
+                  <div className="timer-display">
+                    {formatTime(elapsedTime)}
+                  </div>
+
+                  <Button 
+                    onClick={handleStop}
+                    variant="destructive"
+                    size="lg"
+                    className="min-w-[120px]"
+                  >
+                    <Square className="w-5 h-5 mr-2" />
+                    End Session
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Focus Tips */}
+          <div className="max-w-2xl mx-auto">
+            <Card className="glass-effect border-border/50">
+              <CardContent className="p-6">
+                <h4 className="font-semibold mb-4 flex items-center">
+                  <Clock className="w-5 h-5 mr-2 text-primary" />
+                  Focus Tips
+                </h4>
+                <div className="text-sm text-foreground-secondary space-y-2 text-left">
+                  <p>• Metric will check if you're still active after 45 minutes</p>
+                  <p>• If inactive, you'll get a 5-minute warning to continue or end</p>
+                  <p>• After the first check, you'll be prompted every 30 minutes</p>
+                  <p>• Works offline - sessions sync automatically when online</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </div>
 
-      {/* Timer Display */}
-      <Card className={cn(
-        "p-8 md:p-12 text-center mb-8 glass-effect border-2",
-        currentSession && "pulse-glow border-primary"
-      )}>
-        <div className="mb-8">
-          <div className="timer-display mb-4">
-            {formatTime(elapsedTime)}
-          </div>
-          
-          {currentSession && (
-            <div className="flex items-center justify-center gap-2 text-lg text-foreground-secondary">
-              <Target className="w-5 h-5" />
-              <span>{currentSession.description}</span>
-            </div>
-          )}
-        </div>
-
-        {!currentSession ? (
-          <div className="space-y-6">
-            <div className="max-w-md mx-auto">
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="What are you focusing on?"
-                className="text-center text-lg py-6 border-2 border-primary/20 focus:border-primary"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && description.trim()) {
-                    handleStart();
-                  }
-                }}
-              />
-            </div>
-            
-            <Button
-              onClick={handleStart}
-              disabled={!description.trim()}
-              size="lg"
-              className="px-12 py-6 text-lg bg-gradient-primary hover:opacity-90 shadow-glow transition-all duration-300"
-            >
-              <Play className="w-6 h-6 mr-2" />
-              Start Focus Session
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="flex items-center justify-center gap-4 text-sm text-foreground-muted">
-              <Clock className="w-4 h-4" />
-              <span>Session started at {currentSession.start.toLocaleTimeString()}</span>
-            </div>
-            
-            <Button
-              onClick={handleStop}
-              variant="destructive"
-              size="lg"
-              className="px-12 py-6 text-lg"
-            >
-              <Square className="w-6 h-6 mr-2" />
-              End Session
-            </Button>
-          </div>
-        )}
-      </Card>
-
-      {/* Tips */}
-      <Card className="p-6 bg-surface-elevated border border-primary/20">
-        <h3 className="font-semibold mb-3 flex items-center gap-2 text-primary">
-          <Target className="w-5 h-5" />
-          Focus Tips
-        </h3>
-        <ul className="space-y-2 text-sm text-foreground-secondary">
-          <li>• FlowCheck will check for inactivity after 45 minutes, then every 30 minutes</li>
-          <li>• Move your mouse or use your keyboard to stay active</li>
-          <li>• Take breaks when prompted to maintain optimal focus</li>
-          <li>• Review your analytics to understand your peak focus times</li>
-        </ul>
-      </Card>
-    </div>
+      <InactivityDialog
+        isOpen={showInactivityDialog}
+        onContinue={handleInactivityContinue}
+        onEnd={handleInactivityEnd}
+        timeoutDuration={300} // 5 minutes
+      />
+    </>
   );
 };
