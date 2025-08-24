@@ -1,6 +1,9 @@
 import React, { useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { 
   BarChart, 
   Bar, 
@@ -13,7 +16,9 @@ import {
   Line,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  AreaChart,
+  Area
 } from 'recharts';
 import { 
   Download, 
@@ -21,7 +26,15 @@ import {
   Clock, 
   Target, 
   Calendar,
-  Award
+  Award,
+  Flame,
+  AlertTriangle,
+  Timer,
+  Activity,
+  BarChart3,
+  Zap,
+  Users,
+  TrendingDown
 } from 'lucide-react';
 
 type Session = {
@@ -30,6 +43,7 @@ type Session = {
   start: Date;
   end?: Date;
   duration: number;
+  discarded?: boolean;
 };
 
 interface AnalyticsProps {
@@ -40,37 +54,62 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
   const analyticsData = useMemo(() => {
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     
-    // Filter sessions from last 7 days
+    // Filter sessions
     const recentSessions = sessions.filter(session => session.start >= sevenDaysAgo);
+    const monthSessions = sessions.filter(session => session.start >= thirtyDaysAgo);
+    const completedSessions = sessions.filter(session => !session.discarded);
+    const discardedSessions = sessions.filter(session => session.discarded);
     
-    // Daily data for the last 7 days
-    const dailyData = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-      const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-      
-      const daySessions = recentSessions.filter(session => 
-        session.start >= dayStart && session.start < dayEnd
-      );
-      
-      const totalMinutes = daySessions.reduce((sum, session) => 
-        sum + (session.duration / (1000 * 60)), 0
-      );
-      
-      dailyData.push({
-        day: date.toLocaleDateString('en-US', { weekday: 'short' }),
-        date: date.toLocaleDateString(),
-        minutes: Math.round(totalMinutes),
-        sessions: daySessions.length
-      });
-    }
+    // Daily data for multiple periods
+    const createDailyData = (days: number, sessionArray: Session[]) => {
+      const data = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+        
+        const daySessions = sessionArray.filter(session => 
+          session.start >= dayStart && session.start < dayEnd && !session.discarded
+        );
+        const dayDiscarded = sessionArray.filter(session => 
+          session.start >= dayStart && session.start < dayEnd && session.discarded
+        );
+        
+        const totalMinutes = daySessions.reduce((sum, session) => 
+          sum + (session.duration / (1000 * 60)), 0
+        );
+        const idleMinutes = dayDiscarded.reduce((sum, session) => 
+          sum + (session.duration / (1000 * 60)), 0
+        );
+        
+        data.push({
+          day: date.toLocaleDateString('en-US', { weekday: 'short' }),
+          date: date.toLocaleDateString(),
+          minutes: Math.round(totalMinutes),
+          idleMinutes: Math.round(idleMinutes),
+          sessions: daySessions.length,
+          discarded: dayDiscarded.length,
+          productivity: totalMinutes > 0 ? Math.round((totalMinutes / (totalMinutes + idleMinutes)) * 100) : 0
+        });
+      }
+      return data;
+    };
+
+    const dailyData = createDailyData(7, recentSessions);
+    const monthlyData = createDailyData(30, monthSessions);
+    
+    // Weekly comparison
+    const currentWeek = dailyData.slice(-7);
+    const previousWeek = createDailyData(14, sessions).slice(0, 7);
+    const currentWeekTotal = currentWeek.reduce((sum, day) => sum + day.minutes, 0);
+    const previousWeekTotal = previousWeek.reduce((sum, day) => sum + day.minutes, 0);
     
     // Hourly distribution
     const hourlyData = Array.from({ length: 24 }, (_, hour) => {
       const hourSessions = recentSessions.filter(session => 
-        session.start.getHours() === hour
+        session.start.getHours() === hour && !session.discarded
       );
       
       return {
@@ -82,8 +121,13 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
       };
     }).filter(data => data.sessions > 0);
     
-    // Category distribution (mock data based on descriptions)
-    const categories = recentSessions.reduce((acc, session) => {
+    // Find peak productivity hours
+    const peakHour = hourlyData.reduce((max, hour) => 
+      hour.minutes > max.minutes ? hour : max, { hour: 'N/A', minutes: 0 }
+    );
+    
+    // Category distribution
+    const categories = recentSessions.filter(s => !s.discarded).reduce((acc, session) => {
       const category = session.description.toLowerCase().includes('code') ? 'Coding' :
                      session.description.toLowerCase().includes('write') ? 'Writing' :
                      session.description.toLowerCase().includes('learn') ? 'Learning' :
@@ -91,57 +135,111 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
                      session.description.toLowerCase().includes('plan') ? 'Planning' : 'Other';
       
       if (!acc[category]) {
-        acc[category] = { name: category, value: 0, sessions: 0 };
+        acc[category] = { name: category, value: 0, sessions: 0, percentage: 0 };
       }
       acc[category].value += session.duration / (1000 * 60);
       acc[category].sessions += 1;
       return acc;
-    }, {} as Record<string, { name: string; value: number; sessions: number }>);
+    }, {} as Record<string, { name: string; value: number; sessions: number; percentage: number }>);
     
+    const totalCategoryTime = Object.values(categories).reduce((sum, cat) => sum + cat.value, 0);
     const categoryData = Object.values(categories).map(cat => ({
       ...cat,
-      value: Math.round(cat.value)
+      value: Math.round(cat.value),
+      percentage: totalCategoryTime > 0 ? Math.round((cat.value / totalCategoryTime) * 100) : 0
     }));
     
-    // Statistics
-    const totalMinutes = recentSessions.reduce((sum, session) => 
+    // Streak calculation
+    const calculateStreak = () => {
+      const sortedDays = [...dailyData].reverse();
+      let currentStreak = 0;
+      let longestStreak = 0;
+      let tempStreak = 0;
+      
+      for (const day of sortedDays) {
+        if (day.sessions > 0) {
+          tempStreak++;
+          if (currentStreak === 0) currentStreak = tempStreak;
+        } else {
+          longestStreak = Math.max(longestStreak, tempStreak);
+          tempStreak = 0;
+          currentStreak = 0;
+        }
+      }
+      longestStreak = Math.max(longestStreak, tempStreak);
+      
+      return { currentStreak, longestStreak };
+    };
+    
+    const { currentStreak, longestStreak } = calculateStreak();
+    
+    // Advanced metrics
+    const totalMinutes = recentSessions.filter(s => !s.discarded).reduce((sum, session) => 
+      sum + (session.duration / (1000 * 60)), 0
+    );
+    const totalTimeIncludingIdle = recentSessions.reduce((sum, session) => 
       sum + (session.duration / (1000 * 60)), 0
     );
     
-    const avgSessionLength = recentSessions.length > 0 
-      ? totalMinutes / recentSessions.length 
+    const productivityScore = totalTimeIncludingIdle > 0 
+      ? Math.round((totalMinutes / totalTimeIncludingIdle) * 100)
+      : 100;
+    
+    const avgSessionLength = completedSessions.length > 0 
+      ? totalMinutes / completedSessions.filter(s => s.start >= sevenDaysAgo).length
       : 0;
     
-    const longestSession = recentSessions.reduce((max, session) => 
+    const longestSession = recentSessions.filter(s => !s.discarded).reduce((max, session) => 
       session.duration > max ? session.duration : max, 0
     ) / (1000 * 60);
     
     const todayMinutes = dailyData[6]?.minutes || 0;
+    const weeklyGoal = 1200; // 20 hours per week
+    const weeklyProgress = (currentWeekTotal / weeklyGoal) * 100;
+    
+    // Trend analysis
+    const weeklyTrend = currentWeekTotal >= previousWeekTotal ? 'increasing' : 'decreasing';
+    const trendPercentage = previousWeekTotal > 0 
+      ? Math.abs(((currentWeekTotal - previousWeekTotal) / previousWeekTotal) * 100)
+      : 0;
     
     return {
       dailyData,
+      monthlyData,
       hourlyData,
       categoryData,
+      peakHour,
+      currentWeekTotal,
+      previousWeekTotal,
+      weeklyTrend,
+      trendPercentage,
       stats: {
         totalMinutes: Math.round(totalMinutes),
         avgSessionLength: Math.round(avgSessionLength),
         longestSession: Math.round(longestSession),
         todayMinutes,
-        totalSessions: recentSessions.length,
-        weeklyGoal: 1200 // 20 hours per week
+        totalSessions: completedSessions.filter(s => s.start >= sevenDaysAgo).length,
+        discardedSessions: discardedSessions.filter(s => s.start >= sevenDaysAgo).length,
+        productivityScore,
+        currentStreak,
+        longestStreak,
+        weeklyGoal,
+        weeklyProgress: Math.min(weeklyProgress, 100),
+        monthlyMinutes: Math.round(monthSessions.filter(s => !s.discarded).reduce((sum, s) => sum + s.duration / (1000 * 60), 0))
       }
     };
   }, [sessions]);
 
   const exportData = () => {
     const csvContent = [
-      'Date,Description,Start Time,End Time,Duration (minutes)',
+      'Date,Description,Start Time,End Time,Duration (minutes),Status',
       ...sessions.map(session => [
         session.start.toLocaleDateString(),
         session.description,
         session.start.toLocaleTimeString(),
         session.end?.toLocaleTimeString() || 'In Progress',
-        Math.round(session.duration / (1000 * 60))
+        Math.round(session.duration / (1000 * 60)),
+        session.discarded ? 'Discarded' : 'Completed'
       ].join(','))
     ].join('\n');
     
@@ -149,12 +247,12 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'flowcheck-sessions.csv';
+    a.download = 'metric-sessions.csv';
     a.click();
     window.URL.revokeObjectURL(url);
   };
 
-  const COLORS = ['hsl(var(--primary))', 'hsl(var(--success))', 'hsl(var(--warning))', 'hsl(var(--destructive))', 'hsl(var(--muted))'];
+  const COLORS = ['hsl(var(--primary))', 'hsl(var(--success))', 'hsl(var(--warning))', 'hsl(var(--destructive))', 'hsl(var(--muted))', 'hsl(var(--accent))'];
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl">
@@ -163,7 +261,7 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
         <div>
           <h1 className="text-3xl font-bold mb-2">Analytics Dashboard</h1>
           <p className="text-foreground-secondary">
-            Track your focus patterns and productivity insights
+            Advanced productivity insights and performance tracking
           </p>
         </div>
         
@@ -173,181 +271,497 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
         </Button>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <Card className="p-6 card-hover">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-foreground-muted">Today's Focus</p>
-              <p className="text-2xl font-bold text-primary">
-                {analyticsData.stats.todayMinutes}m
-              </p>
-            </div>
-            <Clock className="w-8 h-8 text-primary" />
-          </div>
-        </Card>
-        
-        <Card className="p-6 card-hover">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-foreground-muted">Weekly Total</p>
-              <p className="text-2xl font-bold text-success">
-                {analyticsData.stats.totalMinutes}m
-              </p>
-            </div>
-            <TrendingUp className="w-8 h-8 text-success" />
-          </div>
-        </Card>
-        
-        <Card className="p-6 card-hover">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-foreground-muted">Avg Session</p>
-              <p className="text-2xl font-bold text-warning">
-                {analyticsData.stats.avgSessionLength}m
-              </p>
-            </div>
-            <Target className="w-8 h-8 text-warning" />
-          </div>
-        </Card>
-        
-        <Card className="p-6 card-hover">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-foreground-muted">Longest Session</p>
-              <p className="text-2xl font-bold text-destructive">
-                {analyticsData.stats.longestSession}m
-              </p>
-            </div>
-            <Award className="w-8 h-8 text-destructive" />
-          </div>
-        </Card>
-      </div>
+      <Tabs defaultValue="overview" className="space-y-8">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="trends">Trends</TabsTrigger>
+          <TabsTrigger value="categories">Categories</TabsTrigger>
+          <TabsTrigger value="streaks">Streaks</TabsTrigger>
+          <TabsTrigger value="sessions">Sessions</TabsTrigger>
+        </TabsList>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-        {/* Daily Activity */}
-        <Card className="p-6">
-          <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-primary" />
-            Daily Activity (Last 7 Days)
-          </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={analyticsData.dailyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis 
-                dataKey="day" 
-                stroke="hsl(var(--foreground-muted))"
-                fontSize={12}
-              />
-              <YAxis 
-                stroke="hsl(var(--foreground-muted))"
-                fontSize={12}
-              />
-              <Tooltip 
-                contentStyle={{
-                  backgroundColor: 'hsl(var(--surface))',
-                  border: '1px solid hsl(var(--border))',
-                  borderRadius: '8px'
-                }}
-                labelFormatter={(value) => `Day: ${value}`}
-                formatter={(value) => [`${value} minutes`, 'Focus Time']}
-              />
-              <Bar 
-                dataKey="minutes" 
-                fill="hsl(var(--primary))"
-                radius={[4, 4, 0, 0]}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-
-        {/* Hourly Distribution */}
-        <Card className="p-6">
-          <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5 text-success" />
-            Peak Focus Hours
-          </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={analyticsData.hourlyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis 
-                dataKey="hour" 
-                stroke="hsl(var(--foreground-muted))"
-                fontSize={12}
-              />
-              <YAxis 
-                stroke="hsl(var(--foreground-muted))"
-                fontSize={12}
-              />
-              <Tooltip 
-                contentStyle={{
-                  backgroundColor: 'hsl(var(--surface))',
-                  border: '1px solid hsl(var(--border))',
-                  borderRadius: '8px'
-                }}
-                formatter={(value) => [`${value} sessions`, 'Focus Sessions']}
-              />
-              <Line 
-                type="monotone" 
-                dataKey="sessions" 
-                stroke="hsl(var(--success))" 
-                strokeWidth={3}
-                dot={{ fill: 'hsl(var(--success))', strokeWidth: 2, r: 4 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </Card>
-      </div>
-
-      {/* Category Distribution */}
-      {analyticsData.categoryData.length > 0 && (
-        <Card className="p-6">
-          <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Target className="w-5 h-5 text-warning" />
-            Focus Categories
-          </h3>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={analyticsData.categoryData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {analyticsData.categoryData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => [`${value} minutes`, 'Focus Time']} />
-              </PieChart>
-            </ResponsiveContainer>
+        <TabsContent value="overview" className="space-y-8">
+          {/* Key Metrics */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <Card className="p-6 card-hover">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-foreground-muted">Today's Focus</p>
+                  <p className="text-2xl font-bold text-primary">
+                    {analyticsData.stats.todayMinutes}m
+                  </p>
+                  <p className="text-xs text-foreground-muted mt-1">
+                    {Math.round(analyticsData.stats.todayMinutes / 60 * 10) / 10}h total
+                  </p>
+                </div>
+                <Clock className="w-8 h-8 text-primary" />
+              </div>
+            </Card>
             
-            <div className="space-y-4">
-              {analyticsData.categoryData.map((category, index) => (
-                <div key={category.name} className="flex items-center justify-between p-3 bg-surface-elevated rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div 
-                      className="w-4 h-4 rounded-full" 
-                      style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                    />
-                    <span className="font-medium">{category.name}</span>
+            <Card className="p-6 card-hover">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-foreground-muted">Weekly Total</p>
+                  <p className="text-2xl font-bold text-success">
+                    {analyticsData.stats.totalMinutes}m
+                  </p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="w-full bg-muted rounded-full h-2">
+                      <div 
+                        className="bg-success h-2 rounded-full transition-all"
+                        style={{ width: `${Math.min(analyticsData.stats.weeklyProgress, 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-foreground-muted">
+                      {Math.round(analyticsData.stats.weeklyProgress)}%
+                    </span>
                   </div>
-                  <div className="text-right">
-                    <div className="font-semibold">{category.value}m</div>
-                    <div className="text-sm text-foreground-muted">{category.sessions} sessions</div>
+                </div>
+                <TrendingUp className="w-8 h-8 text-success" />
+              </div>
+            </Card>
+            
+            <Card className="p-6 card-hover">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-foreground-muted">Productivity Score</p>
+                  <p className="text-2xl font-bold text-warning">
+                    {analyticsData.stats.productivityScore}%
+                  </p>
+                  <p className="text-xs text-foreground-muted mt-1">
+                    {analyticsData.stats.discardedSessions} discarded
+                  </p>
+                </div>
+                <Zap className="w-8 h-8 text-warning" />
+              </div>
+            </Card>
+            
+            <Card className="p-6 card-hover">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-foreground-muted">Current Streak</p>
+                  <p className="text-2xl font-bold text-destructive">
+                    {analyticsData.stats.currentStreak}
+                  </p>
+                  <p className="text-xs text-foreground-muted mt-1">
+                    Best: {analyticsData.stats.longestStreak} days
+                  </p>
+                </div>
+                <Flame className="w-8 h-8 text-destructive" />
+              </div>
+            </Card>
+          </div>
+
+          {/* Weekly Comparison Alert */}
+          {analyticsData.weeklyTrend === 'decreasing' && analyticsData.trendPercentage > 10 && (
+            <Alert className="border-warning">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                Your productivity has decreased by {Math.round(analyticsData.trendPercentage)}% compared to last week. 
+                Consider reviewing your focus patterns.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Charts Row */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Daily Activity */}
+            <Card className="p-6">
+              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-primary" />
+                Daily Activity (Last 7 Days)
+              </h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={analyticsData.dailyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis 
+                    dataKey="day" 
+                    stroke="hsl(var(--foreground-muted))"
+                    fontSize={12}
+                  />
+                  <YAxis 
+                    stroke="hsl(var(--foreground-muted))"
+                    fontSize={12}
+                  />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--surface))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px'
+                    }}
+                    labelFormatter={(value) => `Day: ${value}`}
+                    formatter={(value, name) => [
+                      `${value} minutes`, 
+                      name === 'minutes' ? 'Productive Time' : 'Idle Time'
+                    ]}
+                  />
+                  <Bar 
+                    dataKey="minutes" 
+                    fill="hsl(var(--primary))"
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <Bar 
+                    dataKey="idleMinutes" 
+                    fill="hsl(var(--muted))"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+
+            {/* Peak Hours */}
+            <Card className="p-6">
+              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-success" />
+                Peak Focus Hours
+              </h3>
+              <div className="mb-4">
+                <Badge variant="outline" className="text-success border-success">
+                  Peak: {analyticsData.peakHour.hour} ({analyticsData.peakHour.minutes}m)
+                </Badge>
+              </div>
+              <ResponsiveContainer width="100%" height={250}>
+                <AreaChart data={analyticsData.hourlyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis 
+                    dataKey="hour" 
+                    stroke="hsl(var(--foreground-muted))"
+                    fontSize={12}
+                  />
+                  <YAxis 
+                    stroke="hsl(var(--foreground-muted))"
+                    fontSize={12}
+                  />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--surface))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px'
+                    }}
+                    formatter={(value) => [`${value} sessions`, 'Focus Sessions']}
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="sessions" 
+                    stroke="hsl(var(--success))" 
+                    fill="hsl(var(--success) / 0.2)"
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="trends" className="space-y-8">
+          {/* Trend Analysis */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart3 className="w-5 h-5 text-primary" />
+                <h3 className="font-semibold">Weekly Trend</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {analyticsData.weeklyTrend === 'increasing' ? (
+                  <TrendingUp className="w-6 h-6 text-success" />
+                ) : (
+                  <TrendingDown className="w-6 h-6 text-destructive" />
+                )}
+                <div>
+                  <p className="text-2xl font-bold">
+                    {analyticsData.weeklyTrend === 'increasing' ? '+' : '-'}
+                    {Math.round(analyticsData.trendPercentage)}%
+                  </p>
+                  <p className="text-sm text-foreground-muted">vs last week</p>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Activity className="w-5 h-5 text-warning" />
+                <h3 className="font-semibold">Monthly Total</h3>
+              </div>
+              <p className="text-2xl font-bold">{analyticsData.stats.monthlyMinutes}m</p>
+              <p className="text-sm text-foreground-muted">
+                {Math.round(analyticsData.stats.monthlyMinutes / 60 * 10) / 10} hours this month
+              </p>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Target className="w-5 h-5 text-destructive" />
+                <h3 className="font-semibold">Avg Session</h3>
+              </div>
+              <p className="text-2xl font-bold">{analyticsData.stats.avgSessionLength}m</p>
+              <p className="text-sm text-foreground-muted">
+                Longest: {analyticsData.stats.longestSession}m
+              </p>
+            </Card>
+          </div>
+
+          {/* Monthly Chart */}
+          <Card className="p-6">
+            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-primary" />
+              Monthly Productivity Trend
+            </h3>
+            <ResponsiveContainer width="100%" height={400}>
+              <LineChart data={analyticsData.monthlyData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis 
+                  dataKey="date" 
+                  stroke="hsl(var(--foreground-muted))"
+                  fontSize={10}
+                  angle={-45}
+                  textAnchor="end"
+                  height={70}
+                />
+                <YAxis 
+                  stroke="hsl(var(--foreground-muted))"
+                  fontSize={12}
+                />
+                <Tooltip 
+                  contentStyle={{
+                    backgroundColor: 'hsl(var(--surface))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: '8px'
+                  }}
+                  labelFormatter={(value) => `Date: ${value}`}
+                  formatter={(value, name) => [`${value}${name === 'productivity' ? '%' : ' min'}`, 
+                    name === 'minutes' ? 'Focus Time' : 'Productivity Score']}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="minutes" 
+                  stroke="hsl(var(--primary))" 
+                  strokeWidth={3}
+                  dot={{ fill: 'hsl(var(--primary))', strokeWidth: 2, r: 3 }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="productivity" 
+                  stroke="hsl(var(--success))" 
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  dot={{ fill: 'hsl(var(--success))', strokeWidth: 2, r: 2 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="categories" className="space-y-8">
+          {analyticsData.categoryData.length > 0 ? (
+            <>
+              <Card className="p-6">
+                <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                  <Target className="w-5 h-5 text-warning" />
+                  Time Allocation by Category
+                </h3>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={analyticsData.categoryData}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percentage }) => `${name} ${percentage}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {analyticsData.categoryData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => [`${value} minutes`, 'Focus Time']} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  
+                  <div className="space-y-4">
+                    {analyticsData.categoryData.map((category, index) => (
+                      <div key={category.name} className="flex items-center justify-between p-4 bg-surface-elevated rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div 
+                            className="w-4 h-4 rounded-full" 
+                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                          />
+                          <span className="font-medium">{category.name}</span>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-semibold">{category.value}m ({category.percentage}%)</div>
+                          <div className="text-sm text-foreground-muted">{category.sessions} sessions</div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
+                </div>
+              </Card>
+            </>
+          ) : (
+            <Card className="p-12 text-center">
+              <Target className="w-12 h-12 text-muted mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Category Data</h3>
+              <p className="text-foreground-secondary">
+                Start tracking sessions to see category breakdown
+              </p>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="streaks" className="space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Flame className="w-6 h-6 text-destructive" />
+                <h3 className="text-xl font-semibold">Streak Analysis</h3>
+              </div>
+              <div className="space-y-6">
+                <div>
+                  <p className="text-sm text-foreground-muted mb-2">Current Streak</p>
+                  <p className="text-4xl font-bold text-destructive">
+                    {analyticsData.stats.currentStreak}
+                  </p>
+                  <p className="text-sm text-foreground-muted">consecutive days</p>
+                </div>
+                <div>
+                  <p className="text-sm text-foreground-muted mb-2">Longest Streak</p>
+                  <p className="text-3xl font-bold text-primary">
+                    {analyticsData.stats.longestStreak}
+                  </p>
+                  <p className="text-sm text-foreground-muted">personal best</p>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Users className="w-6 h-6 text-success" />
+                <h3 className="text-xl font-semibold">Consistency Metrics</h3>
+              </div>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-foreground-muted">Sessions Completed</span>
+                  <span className="font-semibold">{analyticsData.stats.totalSessions}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-foreground-muted">Sessions Discarded</span>
+                  <span className="font-semibold text-destructive">{analyticsData.stats.discardedSessions}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-foreground-muted">Success Rate</span>
+                  <span className="font-semibold text-success">
+                    {analyticsData.stats.totalSessions + analyticsData.stats.discardedSessions > 0 
+                      ? Math.round((analyticsData.stats.totalSessions / (analyticsData.stats.totalSessions + analyticsData.stats.discardedSessions)) * 100)
+                      : 0}%
+                  </span>
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          {/* Streak Visualization */}
+          <Card className="p-6">
+            <h3 className="text-xl font-semibold mb-4">Daily Activity Grid</h3>
+            <div className="grid grid-cols-7 gap-2 mb-4">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                <div key={day} className="text-center text-xs text-foreground-muted p-2">
+                  {day}
                 </div>
               ))}
             </div>
-          </div>
-        </Card>
-      )}
+            <div className="grid grid-cols-7 gap-2">
+              {analyticsData.dailyData.map((day, index) => (
+                <div
+                  key={index}
+                  className={`aspect-square rounded-md border-2 flex items-center justify-center text-xs font-medium ${
+                    day.sessions > 0 
+                      ? 'bg-success border-success text-success-foreground' 
+                      : 'bg-muted border-border text-foreground-muted'
+                  }`}
+                  title={`${day.date}: ${day.sessions} sessions, ${day.minutes}m`}
+                >
+                  {day.sessions}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-4 mt-4 text-xs text-foreground-muted">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-muted border border-border rounded"></div>
+                <span>No activity</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-success rounded"></div>
+                <span>Active day</span>
+              </div>
+            </div>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sessions" className="space-y-8">
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-semibold flex items-center gap-2">
+                <Timer className="w-5 h-5 text-primary" />
+                All Sessions
+              </h3>
+              <Badge variant="outline">
+                {sessions.length} total sessions
+              </Badge>
+            </div>
+            
+            <div className="space-y-4 max-h-96 overflow-y-auto">
+              {sessions.length > 0 ? (
+                sessions.slice(0, 50).map((session) => (
+                  <div
+                    key={session.id}
+                    className={`flex items-center justify-between p-4 rounded-lg border ${
+                      session.discarded 
+                        ? 'bg-destructive/5 border-destructive/20' 
+                        : 'bg-surface-elevated border-border'
+                    }`}
+                  >
+                    <div className="flex-1">
+                      <h4 className="font-medium">{session.description}</h4>
+                      <div className="flex items-center gap-4 mt-1 text-sm text-foreground-muted">
+                        <span>
+                          {session.start.toLocaleDateString()} at {session.start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <span>{Math.round(session.duration / (1000 * 60))} minutes</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {session.discarded ? (
+                        <Badge variant="destructive">Discarded</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-success border-success">Completed</Badge>
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12">
+                  <Timer className="w-12 h-12 text-muted mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">No Sessions Yet</h3>
+                  <p className="text-foreground-secondary">
+                    Start your first focus session to see it here
+                  </p>
+                </div>
+              )}
+            </div>
+            
+            {sessions.length > 50 && (
+              <div className="mt-4 text-center">
+                <p className="text-sm text-foreground-muted">
+                  Showing 50 of {sessions.length} sessions. Export CSV for complete data.
+                </p>
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

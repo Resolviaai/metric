@@ -96,7 +96,14 @@ export const LandingPage = () => {
             <Button size="lg" className="text-lg px-8 py-6" asChild>
               <Link to="/auth">Start Focusing Now</Link>
             </Button>
-            <Button variant="outline" size="lg" className="text-lg px-8 py-6">
+            <Button 
+              variant="outline" 
+              size="lg" 
+              className="text-lg px-8 py-6"
+              onClick={() => {
+                document.getElementById('features-section')?.scrollIntoView({ behavior: 'smooth' });
+              }}
+            >
               Learn More
             </Button>
           </div>
@@ -118,7 +125,7 @@ export const LandingPage = () => {
       </section>
 
       {/* Features Section */}
-      <section className="container mx-auto px-4 py-24">
+      <section id="features-section" className="container mx-auto px-4 py-24">
         <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold mb-4">
             Everything You Need to{' '}
@@ -168,7 +175,7 @@ export const LandingPage = () => {
               <span className="text-lg font-semibold">Metric</span>
             </div>
             <p className="text-foreground-secondary text-sm">
-              © 2024 Metric. All rights reserved.
+              © {new Date().getFullYear()} Metric. All rights reserved.
             </p>
           </div>
         </div>

@@ -101,60 +101,68 @@ export const Header: React.FC<HeaderProps> = ({ activeView, onViewChange, curren
 
       {/* Mobile Menu */}
       {isMobile && mobileMenuOpen && (
-        <div className="border-t border-border bg-background/95 backdrop-blur">
-          <div className="container mx-auto px-4 py-4 space-y-2">
+        <div className="border-t border-border bg-background/98 backdrop-blur-sm shadow-lg">
+          <div className="container mx-auto px-4 py-6 space-y-3">
             {currentSession && (
-              <div className="flex items-center space-x-2 text-sm mb-4 p-3 bg-surface rounded-lg">
+              <div className="flex items-center space-x-2 text-sm mb-4 p-4 bg-success/10 border border-success/20 rounded-lg">
                 <div className="w-2 h-2 bg-success rounded-full animate-pulse"></div>
-                <span className="text-foreground-secondary">Active: {currentSession.description}</span>
+                <span className="text-foreground font-medium">Active: {currentSession.description}</span>
               </div>
             )}
             
             <Button
               variant={activeView === 'timer' ? 'default' : 'ghost'}
-              size="sm"
+              size="lg"
               onClick={() => {
                 onViewChange('timer');
                 setMobileMenuOpen(false);
               }}
-              className="w-full justify-start"
+              className="w-full justify-start h-12 text-base"
             >
-              <Timer className="h-4 w-4 mr-2" />
+              <Timer className="h-5 w-5 mr-3" />
               Timer
             </Button>
             
             <Button
               variant={activeView === 'analytics' ? 'default' : 'ghost'}
-              size="sm"
+              size="lg"
               onClick={() => {
                 onViewChange('analytics');
                 setMobileMenuOpen(false);
               }}
-              className="w-full justify-start"
+              className="w-full justify-start h-12 text-base"
             >
-              <BarChart3 className="h-4 w-4 mr-2" />
+              <BarChart3 className="h-5 w-5 mr-3" />
               Analytics
             </Button>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleTheme}
-              className="w-full justify-start"
-            >
-              {theme === 'dark' ? <Sun className="h-4 w-4 mr-2" /> : <Moon className="h-4 w-4 mr-2" />}
-              {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-            </Button>
+            <div className="border-t border-border pt-3 mt-4">
+              <Button
+                variant="ghost"
+                size="lg"
+                onClick={() => {
+                  toggleTheme();
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full justify-start h-12 text-base"
+              >
+                {theme === 'dark' ? <Sun className="h-5 w-5 mr-3" /> : <Moon className="h-5 w-5 mr-3" />}
+                {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+              </Button>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={signOut}
-              className="w-full justify-start"
-            >
-              <LogOut className="h-4 w-4 mr-2" />
-              Sign Out
-            </Button>
+              <Button
+                variant="ghost"
+                size="lg"
+                onClick={() => {
+                  signOut();
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full justify-start h-12 text-base text-destructive hover:text-destructive"
+              >
+                <LogOut className="h-5 w-5 mr-3" />
+                Sign Out
+              </Button>
+            </div>
           </div>
         </div>
       )}
