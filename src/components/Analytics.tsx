@@ -126,28 +126,14 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
       hour.minutes > max.minutes ? hour : max, { hour: 'N/A', minutes: 0 }
     );
     
-    // Category distribution
-    const categories = recentSessions.filter(s => !s.discarded).reduce((acc, session) => {
-      const category = session.description.toLowerCase().includes('code') ? 'Coding' :
-                     session.description.toLowerCase().includes('write') ? 'Writing' :
-                     session.description.toLowerCase().includes('learn') ? 'Learning' :
-                     session.description.toLowerCase().includes('review') ? 'Review' :
-                     session.description.toLowerCase().includes('plan') ? 'Planning' : 'Other';
-      
-      if (!acc[category]) {
-        acc[category] = { name: category, value: 0, sessions: 0, percentage: 0 };
-      }
-      acc[category].value += session.duration / (1000 * 60);
-      acc[category].sessions += 1;
-      return acc;
-    }, {} as Record<string, { name: string; value: number; sessions: number; percentage: number }>);
-    
-    const totalCategoryTime = Object.values(categories).reduce((sum, cat) => sum + cat.value, 0);
-    const categoryData = Object.values(categories).map(cat => ({
-      ...cat,
-      value: Math.round(cat.value),
-      percentage: totalCategoryTime > 0 ? Math.round((cat.value / totalCategoryTime) * 100) : 0
-    }));
+    // Category data (individual sessions for pie chart)
+    const categoryData = completedSessions
+      .map(session => ({
+        name: session.description,
+        minutes: Math.round(session.duration / (1000 * 60)),
+        id: session.id
+      }))
+      .sort((a, b) => b.minutes - a.minutes);
     
     // Streak calculation
     const calculateStreak = () => {
@@ -272,12 +258,12 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
       </div>
 
       <Tabs defaultValue="overview" className="space-y-8">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="trends">Trends</TabsTrigger>
-          <TabsTrigger value="categories">Categories</TabsTrigger>
-          <TabsTrigger value="streaks">Streaks</TabsTrigger>
-          <TabsTrigger value="sessions">Sessions</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-5 h-auto">
+          <TabsTrigger value="overview" className="text-xs sm:text-sm px-2 sm:px-4">Overview</TabsTrigger>
+          <TabsTrigger value="trends" className="text-xs sm:text-sm px-2 sm:px-4">Trends</TabsTrigger>
+          <TabsTrigger value="categories" className="text-xs sm:text-sm px-2 sm:px-4">Categories</TabsTrigger>
+          <TabsTrigger value="streaks" className="text-xs sm:text-sm px-2 sm:px-4">Streaks</TabsTrigger>
+          <TabsTrigger value="sessions" className="text-xs sm:text-sm px-2 sm:px-4">Sessions</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-8">
@@ -567,10 +553,10 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
                         cx="50%"
                         cy="50%"
                         labelLine={false}
-                        label={({ name, percentage }) => `${name} ${percentage}%`}
+                        label={({ name, minutes }) => `${name.slice(0, 20)}${name.length > 20 ? '...' : ''}`}
                         outerRadius={80}
                         fill="#8884d8"
-                        dataKey="value"
+                        dataKey="minutes"
                       >
                         {analyticsData.categoryData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -580,22 +566,26 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
                     </PieChart>
                   </ResponsiveContainer>
                   
-                  <div className="space-y-4">
-                    {analyticsData.categoryData.map((category, index) => (
-                      <div key={category.name} className="flex items-center justify-between p-4 bg-surface-elevated rounded-lg">
+                  <div className="space-y-4 max-h-96 overflow-y-auto">
+                    {analyticsData.categoryData.slice(0, 10).map((session, index) => (
+                      <div key={session.id} className="flex items-center justify-between p-4 bg-surface-elevated rounded-lg">
                         <div className="flex items-center gap-3">
                           <div 
                             className="w-4 h-4 rounded-full" 
                             style={{ backgroundColor: COLORS[index % COLORS.length] }}
                           />
-                          <span className="font-medium">{category.name}</span>
+                          <span className="font-medium text-sm">{session.name}</span>
                         </div>
                         <div className="text-right">
-                          <div className="font-semibold">{category.value}m ({category.percentage}%)</div>
-                          <div className="text-sm text-foreground-muted">{category.sessions} sessions</div>
+                          <div className="font-semibold">{session.minutes}m</div>
                         </div>
                       </div>
                     ))}
+                    {analyticsData.categoryData.length > 10 && (
+                      <p className="text-sm text-foreground-muted text-center mt-4">
+                        Showing top 10 sessions. Export CSV for complete data.
+                      </p>
+                    )}
                   </div>
                 </div>
               </Card>
@@ -664,37 +654,49 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
 
           {/* Streak Visualization */}
           <Card className="p-6">
-            <h3 className="text-xl font-semibold mb-4">Daily Activity Grid</h3>
-            <div className="grid grid-cols-7 gap-2 mb-4">
+            <h3 className="text-xl font-semibold mb-4">Daily Activity Grid (Last 30 Days)</h3>
+            <div className="grid grid-cols-7 gap-1 sm:gap-2 mb-4">
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                <div key={day} className="text-center text-xs text-foreground-muted p-2">
+                <div key={day} className="text-center text-xs text-foreground-muted p-1 sm:p-2">
                   {day}
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-7 gap-2">
-              {analyticsData.dailyData.map((day, index) => (
+            <div className="grid grid-cols-7 gap-1 sm:gap-2">
+              {analyticsData.monthlyData.slice(-35).map((day, index) => (
                 <div
                   key={index}
-                  className={`aspect-square rounded-md border-2 flex items-center justify-center text-xs font-medium ${
+                  className={`aspect-square rounded-md border-2 flex items-center justify-center text-xs font-medium transition-colors ${
                     day.sessions > 0 
-                      ? 'bg-success border-success text-success-foreground' 
-                      : 'bg-muted border-border text-foreground-muted'
+                      ? day.sessions >= 3
+                        ? 'bg-success border-success text-success-foreground'
+                        : day.sessions >= 1
+                        ? 'bg-success/70 border-success/70 text-success-foreground'
+                        : 'bg-success/30 border-success/30 text-success-foreground'
+                      : 'bg-muted border-border text-foreground-muted hover:bg-muted-hover'
                   }`}
                   title={`${day.date}: ${day.sessions} sessions, ${day.minutes}m`}
                 >
-                  {day.sessions}
+                  {day.sessions || ''}
                 </div>
               ))}
             </div>
-            <div className="flex items-center gap-4 mt-4 text-xs text-foreground-muted">
+            <div className="flex items-center gap-2 sm:gap-4 mt-4 text-xs text-foreground-muted flex-wrap">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 bg-muted border border-border rounded"></div>
                 <span>No activity</span>
               </div>
               <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-success/30 rounded"></div>
+                <span>1-2 sessions</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-success/70 rounded"></div>
+                <span>2-3 sessions</span>
+              </div>
+              <div className="flex items-center gap-2">
                 <div className="w-3 h-3 bg-success rounded"></div>
-                <span>Active day</span>
+                <span>3+ sessions</span>
               </div>
             </div>
           </Card>

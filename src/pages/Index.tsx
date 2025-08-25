@@ -1,8 +1,8 @@
 import React from 'react';
-import { FlowCheckApp } from '@/components/FlowCheckApp';
+import { MetricApp } from '@/components/MetricApp';
 
 const Index = () => {
-  return <FlowCheckApp />;
+  return <MetricApp />;
 };
 
 export default Index;

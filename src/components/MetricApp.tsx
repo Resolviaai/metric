@@ -14,7 +14,7 @@ type Session = {
   duration: number;
 };
 
-export const FlowCheckApp = () => {
+export const MetricApp = () => {
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeView, setActiveView] = useState<'timer' | 'analytics'>('timer');
