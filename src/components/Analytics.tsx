@@ -51,6 +51,8 @@ interface AnalyticsProps {
 }
 
 export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
+  const [trendView, setTrendView] = React.useState<'daily' | 'weekly' | 'monthly'>('monthly');
+  
   const analyticsData = useMemo(() => {
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -157,41 +159,70 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
       return { currentStreak, longestStreak };
     };
     
-    const { currentStreak, longestStreak } = calculateStreak();
-    
-    // Advanced metrics
-    const totalMinutes = recentSessions.filter(s => !s.discarded).reduce((sum, session) => 
-      sum + (session.duration / (1000 * 60)), 0
-    );
-    const totalTimeIncludingIdle = recentSessions.reduce((sum, session) => 
-      sum + (session.duration / (1000 * 60)), 0
-    );
-    
-    const productivityScore = totalTimeIncludingIdle > 0 
-      ? Math.round((totalMinutes / totalTimeIncludingIdle) * 100)
-      : 100;
-    
-    const avgSessionLength = completedSessions.length > 0 
-      ? totalMinutes / completedSessions.filter(s => s.start >= sevenDaysAgo).length
-      : 0;
-    
-    const longestSession = recentSessions.filter(s => !s.discarded).reduce((max, session) => 
-      session.duration > max ? session.duration : max, 0
-    ) / (1000 * 60);
-    
-    const todayMinutes = dailyData[6]?.minutes || 0;
-    const weeklyGoal = 1200; // 20 hours per week
-    const weeklyProgress = (currentWeekTotal / weeklyGoal) * 100;
-    
-    // Trend analysis
-    const weeklyTrend = currentWeekTotal >= previousWeekTotal ? 'increasing' : 'decreasing';
-    const trendPercentage = previousWeekTotal > 0 
-      ? Math.abs(((currentWeekTotal - previousWeekTotal) / previousWeekTotal) * 100)
-      : 0;
+  const { currentStreak, longestStreak } = calculateStreak();
+  
+  // Create filtered monthly data (skip days with no activity)
+  const filteredMonthlyData = monthlyData.filter(day => day.sessions > 0);
+  
+  // Create weekly averages for monthly view
+  const createWeeklyAverages = (data: any[]) => {
+    const weeks = [];
+    for (let i = 0; i < data.length; i += 7) {
+      const week = data.slice(i, i + 7);
+      const weekMinutes = week.reduce((sum, day) => sum + day.minutes, 0);
+      const weekSessions = week.reduce((sum, day) => sum + day.sessions, 0);
+      const weekStart = week[0]?.date || '';
+      const weekEnd = week[week.length - 1]?.date || '';
+      
+      if (weekMinutes > 0) {
+        weeks.push({
+          date: `${weekStart} - ${weekEnd}`,
+          minutes: Math.round(weekMinutes / week.length),
+          sessions: weekSessions,
+          productivity: Math.round(week.reduce((sum, day) => sum + day.productivity, 0) / week.length)
+        });
+      }
+    }
+    return weeks;
+  };
+  
+  const weeklyAverages = createWeeklyAverages(monthlyData);
+  
+  // Advanced metrics
+  const totalMinutes = recentSessions.filter(s => !s.discarded).reduce((sum, session) => 
+    sum + (session.duration / (1000 * 60)), 0
+  );
+  const totalTimeIncludingIdle = recentSessions.reduce((sum, session) => 
+    sum + (session.duration / (1000 * 60)), 0
+  );
+  
+  const productivityScore = totalTimeIncludingIdle > 0 
+    ? Math.round((totalMinutes / totalTimeIncludingIdle) * 100)
+    : 100;
+  
+  const avgSessionLength = completedSessions.length > 0 
+    ? totalMinutes / completedSessions.filter(s => s.start >= sevenDaysAgo).length
+    : 0;
+  
+  const longestSession = recentSessions.filter(s => !s.discarded).reduce((max, session) => 
+    session.duration > max ? session.duration : max, 0
+  ) / (1000 * 60);
+  
+  const todayMinutes = dailyData[6]?.minutes || 0;
+  const weeklyGoal = 1200; // 20 hours per week
+  const weeklyProgress = (currentWeekTotal / weeklyGoal) * 100;
+  
+  // Trend analysis
+  const weeklyTrend = currentWeekTotal >= previousWeekTotal ? 'increasing' : 'decreasing';
+  const trendPercentage = previousWeekTotal > 0 
+    ? Math.abs(((currentWeekTotal - previousWeekTotal) / previousWeekTotal) * 100)
+    : 0;
     
     return {
       dailyData,
       monthlyData,
+      filteredMonthlyData,
+      weeklyAverages,
       hourlyData,
       categoryData,
       peakHour,
@@ -486,54 +517,162 @@ export const Analytics: React.FC<AnalyticsProps> = ({ sessions }) => {
             </Card>
           </div>
 
-          {/* Monthly Chart */}
+          {/* Productivity Trend Chart */}
           <Card className="p-6">
-            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-primary" />
-              Monthly Productivity Trend
-            </h3>
-            <ResponsiveContainer width="100%" height={400}>
-              <LineChart data={analyticsData.monthlyData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis 
-                  dataKey="date" 
-                  stroke="hsl(var(--foreground-muted))"
-                  fontSize={10}
-                  angle={-45}
-                  textAnchor="end"
-                  height={70}
-                />
-                <YAxis 
-                  stroke="hsl(var(--foreground-muted))"
-                  fontSize={12}
-                />
-                <Tooltip 
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--surface))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '8px'
-                  }}
-                  labelFormatter={(value) => `Date: ${value}`}
-                  formatter={(value, name) => [`${value}${name === 'productivity' ? '%' : ' min'}`, 
-                    name === 'minutes' ? 'Focus Time' : 'Productivity Score']}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="minutes" 
-                  stroke="hsl(var(--primary))" 
-                  strokeWidth={3}
-                  dot={{ fill: 'hsl(var(--primary))', strokeWidth: 2, r: 3 }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="productivity" 
-                  stroke="hsl(var(--success))" 
-                  strokeWidth={2}
-                  strokeDasharray="5 5"
-                  dot={{ fill: 'hsl(var(--success))', strokeWidth: 2, r: 2 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <h3 className="text-xl font-semibold flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-primary" />
+                Productivity Trend
+              </h3>
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant={trendView === 'daily' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setTrendView('daily')}
+                  className="text-xs"
+                >
+                  Daily
+                </Button>
+                <Button
+                  variant={trendView === 'weekly' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setTrendView('weekly')}
+                  className="text-xs"
+                >
+                  Weekly
+                </Button>
+                <Button
+                  variant={trendView === 'monthly' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setTrendView('monthly')}
+                  className="text-xs"
+                >
+                  Monthly
+                </Button>
+              </div>
+            </div>
+            
+            {(() => {
+              const getChartData = () => {
+                switch (trendView) {
+                  case 'daily':
+                    return analyticsData.filteredMonthlyData;
+                  case 'weekly':
+                    return analyticsData.weeklyAverages;
+                  case 'monthly':
+                  default:
+                    return analyticsData.weeklyAverages;
+                }
+              };
+              
+              const chartData = getChartData();
+              const maxValue = Math.max(...chartData.map(d => d.minutes));
+              const yAxisDomain = maxValue > 0 ? [0, Math.ceil(maxValue * 1.1)] : [0, 100];
+              
+              if (chartData.length === 0) {
+                return (
+                  <div className="flex flex-col items-center justify-center h-96 text-center">
+                    <BarChart3 className="w-12 h-12 text-muted mb-4" />
+                    <h4 className="text-lg font-semibold mb-2 text-foreground-muted">No Data Available</h4>
+                    <p className="text-sm text-foreground-secondary">
+                      No sessions found for the selected time range. Start tracking to see your productivity trends.
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="w-full overflow-x-auto">
+                  <ResponsiveContainer width="100%" height={400} minWidth={300}>
+                    {trendView === 'daily' ? (
+                      <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 70 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis 
+                          dataKey="date" 
+                          stroke="hsl(var(--foreground-muted))"
+                          fontSize={10}
+                          angle={-45}
+                          textAnchor="end"
+                          height={70}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis 
+                          stroke="hsl(var(--foreground-muted))"
+                          fontSize={12}
+                          domain={yAxisDomain}
+                        />
+                        <Tooltip 
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--surface))',
+                            border: '1px solid hsl(var(--border))',
+                            borderRadius: '8px',
+                            fontSize: '14px'
+                          }}
+                          labelFormatter={(value) => `Date: ${value}`}
+                          formatter={(value: any, name: string) => [
+                            `${value}${name === 'productivity' ? '%' : ' min'}`, 
+                            name === 'minutes' ? 'Focus Time' : name === 'productivity' ? 'Productivity Score' : name
+                          ]}
+                        />
+                        <Bar 
+                          dataKey="minutes" 
+                          fill="hsl(var(--primary))"
+                          radius={[4, 4, 0, 0]}
+                        />
+                      </BarChart>
+                    ) : (
+                      <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 70 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis 
+                          dataKey="date" 
+                          stroke="hsl(var(--foreground-muted))"
+                          fontSize={10}
+                          angle={-45}
+                          textAnchor="end"
+                          height={70}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis 
+                          stroke="hsl(var(--foreground-muted))"
+                          fontSize={12}
+                          domain={yAxisDomain}
+                        />
+                        <Tooltip 
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--surface))',
+                            border: '1px solid hsl(var(--border))',
+                            borderRadius: '8px',
+                            fontSize: '14px'
+                          }}
+                          labelFormatter={(value) => `Period: ${value}`}
+                          formatter={(value: any, name: string) => [
+                            `${value}${name === 'productivity' ? '%' : ' min'}`, 
+                            name === 'minutes' ? 'Avg Focus Time' : 'Avg Productivity Score'
+                          ]}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="minutes" 
+                          stroke="hsl(var(--primary))" 
+                          strokeWidth={3}
+                          dot={{ fill: 'hsl(var(--primary))', strokeWidth: 2, r: 4 }}
+                          connectNulls={false}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="productivity" 
+                          stroke="hsl(var(--success))" 
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={{ fill: 'hsl(var(--success))', strokeWidth: 2, r: 3 }}
+                          connectNulls={false}
+                        />
+                      </LineChart>
+                    )}
+                  </ResponsiveContainer>
+                </div>
+              );
+            })()}
           </Card>
         </TabsContent>
 
